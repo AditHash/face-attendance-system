@@ -1,44 +1,49 @@
-# Agent instructions: Face Attendance System
-
-## Goal
-Build an independent, local-only computer vision interview demo: a consenting participant enrolls their face, selects their own profile, verifies it with their webcam, and records one attendance event per day. Do not use employer data, source code, screenshots, or credentials. Do not present the demo as production-ready or claim the models were trained by the author.
+# VisionAttend — implementation specification
+Build a fully functional end-to-end local computer vision portfolio application, not just scaffolding or mock UI. Independent interview demo; no employer assets or data. Prioritize a working CPU-based system with real persistence and live inference. Not production-ready for workplace deployment.
 
 ## Stack
-- Python 3.10–3.12, FastAPI, Uvicorn, OpenCV (opencv-python-headless), NumPy, SQLite.
-- Vanilla HTML/CSS/JavaScript; browser getUserMedia on localhost. No frontend build step, cloud, GPU, paid API or external runtime services.
-- OpenCV Zoo YuNet face detector and SFace face embedding ONNX models. Download through an explicit setup script, validate files are not Git LFS pointers; do not commit model weights without verifying licenses.
+Python 3.10–3.12, FastAPI, Uvicorn, OpenCV headless, NumPy, SQLite, vanilla HTML/CSS/JS (no build, external CDNs or paid APIs), browser getUserMedia, WebSocket for live inference. OpenCV Zoo YuNet and SFace ONNX models. Explicit model download script validates non-LFS content and handles errors. Verify model licenses before redistribution. Bind only to 127.0.0.1. Use configurable timezone (default Asia/Kolkata).
 
-## Scope and architecture
-- Browser camera preview; capture a JPEG only when the user clicks. Send it to localhost API via multipart.
-- Enrollment: explicit consent, chosen display name, exactly one face in the frame. Align with detected landmarks, extract and normalize an embedding. Store embedding locally, never the raw photograph.
-- Verification: participant explicitly selects their enrolled profile. Compare only against that profile's embedding using cosine similarity, not against an entire gallery. Reject no-face, multiple-face, unknown profile or below-threshold results. Display similarity score (not probability). Require successful verification and deliberate attendance action; never record bystander faces.
-- SQLite: profiles (id, unique name, embedding, created_at), attendance (id, profile_id, date, timestamp), unique(profile_id, date). Use parameterized SQL, foreign keys, atomic insertion, and local timezone documented in README.
-- Provide dashboard of today's records, enrolled profiles, CSV export, and deletion/reset of locally enrolled data. No silent tracking, background recognition, remote exposure, or raw image persistence.
-- Basic prototype lacks liveness detection, demographic performance validation, authentication, and encryption at rest. State these clearly in UI and README. Do not use for actual workplace decisions, access control, payroll or monitoring.
+## User journeys and routes
+- / : dashboard with actual database counts (registered, checked in today, not checked in, attendance rate), recent events and seven-day chart. No hardcoded real records.
+- /register : three-step wizard (details, enrollment, success). Full name, validated email, explicit biometric consent. Email unique case-insensitively. Capture 5–10 quality samples, only after explicit start, exactly one face, distinct frames, minimum face size, blur checks, sufficient detector score, modest pose changes. User sees sample counter, progress, preview and quality feedback. Do not require a specific pose unless actual pose checks implemented. Compute normalized mean of normalized sample embeddings. Only after successful enrollment atomically create user with unique server-generated UUID and friendly unique public ID (VA-000001 etc.); display ID and copy button. No raw image retention. Cancel/timeout discards transient enrollment.
+- /attendance : distinct kiosk-style attendance terminal. Participant enters their own assigned ID (or selects their own profile); resolve profile and explicitly start verification. Local camera live preview, overlays aligned to displayed frame (mirror handling, aspect ratio), face bounding box and detection confidence, cosine similarity score, matching threshold, current status, FPS, server inference latency, and stable-match progress. Verify exclusively against the claimed profile; no gallery identification, bystander recording or background scanning. For 3 consecutive valid matching frames (configurable), issue short-lived single-use server-side verification token tied to profile and session. Enable Confirm Check-in; consume token atomically and mark once per local date. Reset/stop camera and return to ID entry after confirmation, cancellation or timeout. Unknown ID, no face, multiple faces, low similarity, poor quality, duplicate attendance and camera errors get distinct states. Never mark attendance on failed verification. Duplicate returns existing timestamp and friendly status.
+- /users : searchable/paginated enrolled profiles with ID, name, email, registration date and enrollment status. No embeddings returned by API. Delete with confirmation and cascading attendance deletion; allow re-enrollment with explicit consent.
+- /records : attendance table, filters by date and user, date range, search, pagination, CSV download (escape spreadsheet formula injection). Display timestamps in configured local timezone.
+- /settings : model health, camera choice (device local), configurable verification threshold and stable frame count, local timezone display. Validate bounds; persist settings locally if editable. Never call cosine similarity a calibrated confidence probability.
+- /docs : OpenAPI docs.
 
-## Implementation
-Suggested layout: app.py, face_engine.py, database.py, static/index.html, scripts/download_models.py, tests/, requirements.txt, README.md, .gitignore, AGENTS.md.
-API: GET /api/health, GET /api/profiles, POST /api/enroll, POST /api/attendance, GET /api/attendance, GET /api/attendance.csv, DELETE /api/profiles/{id}.
-Use cv2.FaceDetectorYN.create and setInputSize for each image, cv2.FaceRecognizerSF.create, alignCrop, feature. Guard shared model instances with a lock. Normalize vectors, compute dot product. OpenCV documents 0.363 as a benchmark starting threshold, not a universal security threshold; make it configurable and explain false accept/reject tradeoffs. Reject malformed or oversized input, validate names, handle missing models and camera denial cleanly. Bind 127.0.0.1 only. No permissive CORS, telemetry, remote uploads, or external JS/CDN.
-UI: responsive clean dashboard with camera preview, consent checkbox, enrollment form, profile selection, verify-and-check-in button, result status, attendance table and CSV download. Clear camera after use. Escape user-generated content. Offer deletion and camera stop.
-.gitignore must exclude data/, models/*.onnx, *.db, *.sqlite*, embeddings, images from enrollment, .env, .venv/, __pycache__, and test caches. Never commit real biometric data.
+## Computer vision and live pipeline
+Use cv2.FaceDetectorYN.create, setInputSize per image, cv2.FaceRecognizerSF.create, alignCrop, feature. OpenCV SFace benchmark cosine threshold 0.363 is a starting point, not a security guarantee. Use normalized vectors and dot product; return raw cosine [-1,1] and separate detector confidence [0,1]. Label similarity as such; do not imply accuracy or probability. Reject invalid images, zero-norm vectors, invalid dimensions, oversize payloads, no/multiple faces. Lock shared model instances. Browser capture via canvas, JPEG ~640x480, 3–5 inference requests/sec with at most one outstanding frame, responsive video preview at native FPS; drop stale frames, do not queue. WebSocket frame sequence IDs, JSON response with normalized bbox, detector score, similarity, threshold, quality, verification state, stable_count, latency_ms, verification_token only on success. Use timeouts and clean disconnects, close stream on navigation. Enrollment samples kept in memory only with bounded TTL/session limit. Avoid blocking asyncio event loop: offload CV and blocking DB operations. Validate origin/host and use same-origin only. No silent tracking, image logs, telemetry, remote uploads, or external APIs.
 
-## Acceptance criteria
-1. Fresh clone can install dependencies, download models and launch with documented commands.
-2. User can enroll with consent; no-face/multi-face and invalid image are rejected.
-3. User selects own profile, submits webcam snapshot; verification failure never creates attendance.
-4. Duplicate check-in on same local date is idempotent; CSV exports correctly.
-5. Deleting profile removes associated biometric and attendance data.
-6. App can gracefully report unavailable models or camera permissions.
-7. Tests cover normalized similarity, threshold, malformed input, duplicate attendance, deletion and CSV. Mock inference for automated tests; do not use real faces in CI.
-8. Run python compileall and pytest; report exact outcomes, distinguish automated tests from manual camera checks.
-9. README explains detection vs verification, landmark alignment, embeddings, cosine similarity, threshold calibration, false accepts/rejects, limitations, setup for Windows and Linux, and short demo script.
-10. Keep scope small; finish working core features before optional enhancements.
+## Persistent data and service design
+Suggested layout: app/main.py, app/config.py, app/db.py, app/routers/{pages,users,attendance,settings}.py, app/services/{face_engine,enrollment,verification}.py, app/static/{css,js}, app/templates, scripts/download_models.py, tests, requirements.txt, README.md, .gitignore, AGENTS.md, CLAUDE.md. Use Jinja2 templates or static HTML. Modular typed Python, Pydantic schemas, straightforward code and helpful errors.
+Tables: users (uuid PK, public_id UNIQUE, full_name, normalized_email UNIQUE, consent_at, created_at); face_templates (user_uuid PK/FK, normalized embedding BLOB float32, model version, sample_count, created_at); attendance (id PK, user_uuid FK, attendance_date, checked_in_at UTC, similarity, UNIQUE(user_uuid,attendance_date)); verification_tokens (hashed token or opaque random token in bounded session memory, profile/session binding, expiry, consumed state). Store UTC timestamps, derive date using configured timezone on server. Atomic transactions, parameterized queries, foreign keys, indices on dates/user/email, concurrency-safe ID generation and check-in. Never persist raw frames. Handle DB errors and avoid exposing internals.
 
-## Reference
+## API contracts
+GET /api/health, GET /api/dashboard, GET /api/users, GET /api/users/{public_id}, POST /api/enrollment/start, POST /api/enrollment/{session_id}/sample (multipart), POST /api/enrollment/{session_id}/complete, DELETE /api/enrollment/{session_id}, WS /ws/verify (claimed public ID + session initialization then frame messages), POST /api/attendance/check-in (verification token), GET /api/attendance, GET /api/attendance.csv, DELETE /api/users/{public_id}, GET /api/settings, PATCH /api/settings if editable. Use proper 4xx/5xx codes, consistent errors and response schemas. Never expose face templates. Reject expired, replayed, or mismatched verification tokens; atomic attendance uniqueness is final defense.
+
+## UI
+Professional responsive dashboard, sidebar navigation, accessible labels, loading/empty/error states, toast feedback, clear camera start/stop controls. Registration stepper, progress and success ID. Attendance page large camera panel, status panel with raw similarity and detection confidence, threshold indicator, actual FPS and measured inference latency. No fake FPS or score. Records filters and CSV, confirmation dialogs, real backend integrations. Do not render user input as HTML. Gracefully handle missing models, camera permission denial, disconnection and network timeouts.
+
+## Privacy and limitations
+Only consenting adult demo participants and claimed-identity 1:1 verification, no continuous background monitoring or identification of unrelated people. No use for actual workplace decisions, access control or payroll. No authentication/authorization, liveness detection, encryption at rest, or fairness/accuracy validation unless actually implemented; disclose visibly and in README. Photo replay may fool this prototype. Do not claim blink checks are robust anti-spoofing. Data deletion and camera stop are mandatory. .gitignore data/, model weights, db/sqlite files, enrollment images, embeddings, .env, venv, caches. Never commit personal or biometric records.
+
+## Tests and definition of done
+1. Fresh clone setup on Windows/Linux, explicit download script, app runs on localhost.
+2. Valid registration creates one unique user + template atomically; duplicate email, failed/cancelled enrollment, invalid/multiple/no-face frames rejected.
+3. Live claimed-ID verification returns actual scores/metrics; stable match required; failed match never marks attendance.
+4. Valid token check-in works; expired, forged, replayed and cross-profile tokens fail; concurrent duplicates produce one daily row.
+5. Dashboard queries, filters, pagination, safe CSV, deletion cascade work on actual data.
+6. Test thresholds, normalization, quality gating, WebSocket protocol, frame limits, token expiry, duplicate constraints, timezone boundary, API validation, and DB rollback using mocks/fake vectors and temporary DB. Never use real faces in CI.
+7. Run compileall and pytest; fix errors. Manual browser/camera walkthrough if available; explicitly report unavailable camera tests. No fake success claims.
+8. README includes setup, routes, architecture, diagram, model references, API, demo walkthrough, troubleshooting, privacy limitations, detector vs recognizer, cosine threshold and false accepts/rejects, ONNX and CPU inference. Include sample commands for PowerShell and Linux. Document actual dependencies.
+9. All core pages working and no TODO stubs; prioritize registration and live attendance before optional polish. No cloud/React/Docker until core works.
+
+## References
 https://docs.opencv.org/4.x/d0/dd4/tutorial_dnn_face.html
 https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet
 https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface
 
 ## Agent workflow
-Read this file, implement the smallest complete solution, run tests, fix issues, and summarize actual changes and remaining limitations. Do not only generate a plan. Ask before adding cloud services, external integrations, or production deployment.
+Inspect existing files before editing. Implement the complete MVP, install dependencies, download models, run tests, fix issues and provide exact startup commands plus honest limitations. Do not stop after writing a plan. Do not push real biometric data or add remote services. Keep code understandable for interview explanation.
