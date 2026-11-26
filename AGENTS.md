@@ -38,10 +38,12 @@ VisionAttend is a local face-recognition attendance system and portfolio demo. I
   - `/settings` holds model health, the default camera, the threshold, and stable frames.
   - `/docs` is the API reference, using Swagger assets bundled locally.
 - **Terminal UI:**
-  - Face boxes and cards are color-coded by state: ok, pending, or bad.
+  - Face boxes and cards are color-coded by state: ok, pending, or bad. Each card shows a `MatchStrength` meter (bands relative to the threshold).
   - The panel flashes on each new check-in.
-  - Kiosk mode hides the sidebar and requests fullscreen.
+  - Kiosk mode hides the sidebar, requests fullscreen, and shows a 3 s banner on each check-in: a time-of-day greeting with "Welcome" or "Welcome back", plus a WebAudio chime for new check-ins.
   - The IP URL is kept only in component state.
+- **Theming:** `ui.tsx` (`ThemeToggle`, `applyTheme`) sets `data-theme` on `<html>` to system, light, or dark, and saves the choice in localStorage. All colors are CSS custom properties in `style.css`, including the chart's. Add new colors as tokens in both the light and dark blocks.
+- **Dashboard** includes `absent`: up to 50 profiles with no row for today.
 
 ## Layout
 
@@ -96,6 +98,7 @@ Tests use fake vectors and simulated cameras, and real faces never go into CI. I
 - Frames are downscaled to 640 px, faces must be at least 72 px, and a frame is rejected entirely if it has more than 8 faces. This limits distant or crowded scenes.
 - There is no per-face tracker (streaks are tracked per identity), no best-crop evidence for check-ins, and no check-out.
 - `FaceEngine` uses one lock, so inference for all cameras runs one frame at a time.
+- Planned: mood-aware greeting text from a facial-expression estimate. Only the greeting may change. Never store or log the estimate or act on it, and mention the legal limits (the EU AI Act bans emotion recognition at work and in schools).
 
 ## References
 

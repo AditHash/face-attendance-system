@@ -15,8 +15,11 @@ Everything runs on one computer. Models run on the CPU, data stays in a local SQ
   - Laptop webcam.
   - IP camera or phone camera app (RTSP or HTTP MJPEG).
   - A phone's browser camera paired over Wi-Fi by QR code.
-- **Live terminal.** Face boxes are colored by state: green when checked in, amber while matching, red when unknown or uncertain. The panel flashes on each new check-in, and kiosk mode goes fullscreen for an entrance screen.
-- **Dashboard, users, records.** Shows a 7-day chart, lets you search profiles, re-enroll or delete a person, filter records, and export CSV.
+- **Live terminal.** Face boxes are colored by state: green when checked in, amber while matching, and red when unknown or uncertain. The panel flashes on each new check-in.
+- **Kiosk mode.** Fullscreen for an entrance screen. Each check-in shows a large greeting based on the time of day, such as "Good morning, Aditya!", and plays a short chime. People who already checked in today see "Welcome back".
+- **Match strength.** Raw cosine scores are shown with a bar and a label (Below threshold, Fair, Good, Strong) relative to your threshold.
+- **Dashboard, users, records.** Shows a 7-day chart and who hasn't checked in today. Lets you search profiles, re-enroll or delete a person, filter records, and export CSV.
+- **Light and dark themes.** Follows your system setting, or choose one with the toggle in the sidebar.
 
 ## How it works
 
@@ -249,6 +252,14 @@ If Windows blocks pytest's temp directory, run `uv run pytest --basetemp data/py
 | `VISIONATTEND_DB` | `data/visionattend.db` | SQLite database path |
 | `VISIONATTEND_TIMEZONE` | `Asia/Kolkata` | IANA zone used for attendance dates |
 | `VISIONATTEND_BACKEND_PORT` | `8000` | Backend port for the Vite dev proxy |
+
+## Roadmap
+
+- **Mood-aware greetings.** Change the welcome message based on a facial-expression estimate. For example, "Good morning, Aditya! Welcome back. Have a great day." Expression models are unreliable and often biased, so a mood estimate should only ever change the greeting text. It must never be stored or used to make decisions. The EU AI Act bans emotion recognition in workplaces and schools. Check the rules wherever you deploy.
+- **Server-side camera workers.** Run detection on the server so that recognition doesn't need a browser tab open.
+- **Crowd scenes.** Detect at full resolution or in tiles, track each face across frames, and drop the 8-face limit.
+- **Evidence and check-out.** Save the best face crop with each check-in, and record exit times.
+- **Liveness detection** to reject photos and screens.
 
 ## Credits and license
 
