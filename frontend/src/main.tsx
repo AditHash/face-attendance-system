@@ -7,6 +7,7 @@ import { Dashboard, LoadState, Preferences, Records, Users } from './pages'
 import { PhoneCamera } from './phone'
 import { Register } from './register'
 import { Terminal } from './terminal'
+import { applyTheme, ThemeToggle } from './ui'
 import './style.css'
 
 const navigation = [
@@ -40,7 +41,10 @@ function Desktop() {
       <nav aria-label="Main navigation">{navigation.map(([url, text, Icon]) =>
         <NavLink to={url} key={url} end={url === '/'}><Icon size={18} aria-hidden="true" />{text}</NavLink>
       )}</nav>
-      <div className="sidebar-note">Local demo · Consenting participants only</div>
+      <div className="sidebar-foot">
+        <ThemeToggle />
+        <div className="sidebar-note">Local demo · Consenting participants only</div>
+      </div>
     </aside>
     <main id="main" className="workspace">
       {!settings ? <LoadState error={error} retry={() => retry(value => value + 1)} /> :
@@ -49,7 +53,7 @@ function Desktop() {
           <Route path="/register" element={<Register key={location.search} phoneEnabled={settings.phone_enabled} />} />
           <Route path="/attendance" element={<Terminal settings={settings} />} />
           <Route path="/users" element={<Users timezone={settings.timezone} />} />
-          <Route path="/records" element={<Records timezone={settings.timezone} />} />
+          <Route path="/records" element={<Records timezone={settings.timezone} threshold={settings.threshold} />} />
           <Route path="/settings" element={<Preferences settings={settings} onSave={setSettings} />} />
           <Route path="*" element={<div className="page-heading"><h1>Page not found</h1><Link to="/">Back to overview</Link></div>} />
         </Routes>}
@@ -57,6 +61,7 @@ function Desktop() {
   </div>
 }
 
+applyTheme()
 createRoot(document.getElementById('root')!).render(<StrictMode>
   {location.pathname === '/phone' ? <PhoneCamera /> : <BrowserRouter><Desktop /></BrowserRouter>}
 </StrictMode>)

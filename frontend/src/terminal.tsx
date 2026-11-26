@@ -1,8 +1,9 @@
 import { CheckCircle2, Maximize2, Minimize2, ScanFace } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { formatTime, guidanceFor, socket } from './api'
 import type { Box, Pair, Receipt, Settings } from './api'
 import { CameraPanel, type Tone, useCamera } from './camera'
+import { MatchStrength } from './ui'
 
 type LiveFace = {
   box: Box | null
@@ -137,9 +138,28 @@ function faceTone(face: LiveFace): Tone | undefined {
   return undefined
 }
 
+// Short two-note chime. The AudioContext is created on the kiosk button click,
+// because browsers only allow audio after a user gesture.
+function chime(context: AudioContext | null) {
+  if (!context) return
+  const start = context.currentTime
+  for (const [offset, pitch] of [[0, 880], [0.14, 1320]]) {
+    const tone = context.createOscillator()
+    const gain = context.createGain()
+    tone.frequency.value = pitch
+    gain.gain.setValueAtTime(0.0001, start + offset)
+    gain.gain.exponentialRampToValueAtTime(0.18, start + offset + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.3)
+    tone.connect(gain).connect(context.destination)
+    tone.start(start + offset)
+    tone.stop(start + offset + 0.32)
+  }
+}
+
 // Kiosk mode hides the sidebar and asks for fullscreen. Leaving fullscreen with Esc ends it.
 function useKiosk() {
   const [kiosk, setKiosk] = useState(false)
+  const audio = useRef<AudioContext | null>(null)
   useEffect(() => {
     document.body.classList.toggle('kiosk', kiosk)
     if (!kiosk) return
@@ -157,9 +177,18 @@ function useKiosk() {
       return
     }
     setKiosk(true)
+    try {
+      audio.current ??= new AudioContext()
+      await audio.current.resume()
+    } catch { /* no audio: the banner still shows */ }
     await document.documentElement.requestFullscreen?.().catch(() => {})
   }
-  return { kiosk, toggle }
+  return { kiosk, toggle, audio }
+}
+
+function greeting(iso: string, zone: string) {
+  const hour = Number(new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hourCycle: 'h23', timeZone: zone }).format(new Date(iso)))
+  return hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
 }
 
 function faceStatus(face: LiveFace, required: number) {
@@ -178,16 +207,27 @@ export function Terminal({ settings }: { settings: Settings }) {
   const [error, setError] = useState('')
   const attendance = useLiveAttendance(camera.status === 'live', camera.pair, camera.frame)
   const { result, records } = attendance
-  const { kiosk, toggle } = useKiosk()
+  const { kiosk, toggle, audio } = useKiosk()
   const [flash, setFlash] = useState(false)
+  const [welcome, setWelcome] = useState<Receipt | null>(null)
   const stopCamera = camera.stop
   const latest = records[0]
   useEffect(() => {
-    if (!latest?.created) return
+    if (!latest) return
+    setWelcome(latest)
+    if (!latest.created) {
+      const banner = window.setTimeout(() => setWelcome(null), 3000)
+      return () => window.clearTimeout(banner)
+    }
     setFlash(true)
+    if (kiosk) chime(audio.current)
     const timer = window.setTimeout(() => setFlash(false), 1200)
-    return () => window.clearTimeout(timer)
-  }, [latest])
+    const banner = window.setTimeout(() => setWelcome(null), 3000)
+    return () => {
+      window.clearTimeout(timer)
+      window.clearTimeout(banner)
+    }
+  }, [latest]) // eslint-disable-line react-hooks/exhaustive-deps -- fire once per new receipt
   useEffect(() => {
     if (attendance.error && camera.status === 'live') {
       stopCamera()
@@ -230,11 +270,17 @@ export function Terminal({ settings }: { settings: Settings }) {
           {face.checked_in_at && <time dateTime={face.checked_in_at}>{formatTime(face.checked_in_at, settings.timezone)}</time>}
           <dl className="scores">
             <Metric label="Detection confidence" value={face.detection_confidence != null ? (face.detection_confidence * 100).toFixed(1) + '%' : '—'} />
-            <Metric label="Cosine similarity" value={face.similarity?.toFixed(3) ?? '—'} />
           </dl>
+          {face.similarity != null && <MatchStrength similarity={face.similarity} threshold={result.threshold} />}
         </div>)}
       </section>
     </div>
+    {kiosk && welcome && <div className="welcome-banner" role="status">
+      <CheckCircle2 size={44} aria-hidden="true" />
+      <div><strong>{greeting(new Date().toISOString(), settings.timezone)}, {welcome.full_name}!</strong>
+        <span>{welcome.created ? 'Welcome · checked in at ' : 'Welcome back · already checked in at '}
+          {formatTime(welcome.checked_in_at, settings.timezone)}</span></div>
+    </div>}
     {records.length > 0 && <section className="panel panel-body terminal-records" aria-live="polite">
       <h2>This session</h2>
       <ul className="events">{records.map(record => <li key={keyFor(record)}>

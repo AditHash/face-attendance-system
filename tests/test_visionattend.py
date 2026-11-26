@@ -197,6 +197,7 @@ def test_close_gallery_scores_are_rejected(app_client):
 def test_check_in_receipts_dashboard_filters_export_and_delete(app_client):
     client, _, clock = app_client
     ident = enroll(client, clock, name="=SUM(A1)")["public_id"]
+    assert [row["public_id"] for row in client.get("/api/dashboard").json()["absent"]] == [ident]
     for expected in (True, False):
         with client.websocket_connect("/ws/attendance", headers=ORIGIN) as ws:
             start_terminal(ws)
@@ -208,7 +209,8 @@ def test_check_in_receipts_dashboard_filters_export_and_delete(app_client):
                 timestamp = receipt["checked_in_at"]
             else:
                 assert receipt["checked_in_at"] == timestamp
-    assert client.get("/api/dashboard").json()["present"] == 1
+    dashboard = client.get("/api/dashboard").json()
+    assert dashboard["present"] == 1 and dashboard["absent"] == []
     assert client.get("/api/attendance", params={"search": "SUM", "public_id": ident}).json()["total"] == 1
     assert client.get("/api/attendance", params={"start": "2099-01-01"}).json()["total"] == 0
     assert "'=SUM(A1)" in client.get("/api/attendance.csv", params={"public_id": ident}).text

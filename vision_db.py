@@ -209,12 +209,20 @@ class Store:
                 FROM attendance a JOIN users u ON u.uuid=a.user_uuid
                 ORDER BY a.checked_in_at DESC, a.id DESC LIMIT 5
             """).fetchall()
+            absent = db.execute("""
+                SELECT u.public_id, u.full_name FROM users u
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM attendance a WHERE a.user_uuid=u.uuid AND a.attendance_date=?
+                )
+                ORDER BY u.full_name COLLATE NOCASE, u.public_id LIMIT 50
+            """, (days[-1],)).fetchall()
         present = counts.get(days[-1], 0)
         return {
             "registered": registered, "present": present, "pending": registered - present,
             "rate": round(present / registered * 100, 1) if registered else 0,
             "days": [{"date": day, "count": counts.get(day, 0)} for day in days],
             "recent": [dict(row) for row in recent],
+            "absent": [dict(row) for row in absent],
         }
 
 

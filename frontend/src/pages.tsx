@@ -1,8 +1,9 @@
-import { ArrowDownToLine, ArrowRight, Camera, ChevronLeft, ChevronRight, RefreshCw, Trash2, UserPlus } from 'lucide-react'
+import { ArrowDownToLine, ArrowRight, Camera, ChevronLeft, ChevronRight, RefreshCw, Trash2, UserCheck, UserPlus } from 'lucide-react'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, errorText, formatTime, json, type Page, type Profile, type RecordRow, type Settings } from './api'
 import { cameraError, devices, preferredCamera, saveCamera } from './camera'
+import { MatchStrength } from './ui'
 
 const AttendanceChart = lazy(() => import('./chart'))
 
@@ -53,6 +54,7 @@ type Overview = {
   registered: number; present: number; pending: number; rate: number
   days: { date: string; count: number }[]
   recent: RecordRow[]
+  absent: { public_id: string; full_name: string }[]
 }
 
 export function Dashboard({ timezone }: { timezone: string }) {
@@ -65,11 +67,11 @@ export function Dashboard({ timezone }: { timezone: string }) {
     {error || !data ? <LoadState error={error} retry={retry} /> : <>
       <div className="dashboard-metrics">
         {[
-          ['Registered profiles', data.registered],
-          ['Checked in today', data.present],
-          ['Not checked in', data.pending],
-          ['Attendance rate', data.rate.toFixed(1) + '%'],
-        ].map(([label, value]) => <section className="metric panel" key={label}><p>{label}</p><strong>{value}</strong></section>)}
+          ['Registered profiles', data.registered, 'accent'],
+          ['Checked in today', data.present, 'ok'],
+          ['Not checked in', data.pending, 'pending'],
+          ['Attendance rate', data.rate.toFixed(1) + '%', 'accent'],
+        ].map(([label, value, tone]) => <section className={'metric panel tone-' + tone} key={label}><p>{label}</p><strong>{value}</strong></section>)}
       </div>
       <div className="dashboard-grid">
         <section className="panel panel-body">
@@ -88,8 +90,23 @@ export function Dashboard({ timezone }: { timezone: string }) {
           </li>)}</ul> : <p className="empty">Check-ins will appear here after confirmation.</p>}
         </section>
       </div>
+      <section className="panel panel-body absent-panel">
+        <div className="panel-heading inline"><h2>Not checked in today</h2>
+          <span className="count-chip">{data.pending}</span></div>
+        {!data.registered ? <p className="empty">Register a profile to start tracking attendance.</p> :
+          !data.absent.length ? <p className="empty all-in"><UserCheck size={18} aria-hidden="true" />Everyone has checked in today.</p> :
+            <ul className="absent-list">{data.absent.map(person => <li key={person.public_id}>
+              <span className="avatar" aria-hidden="true">{initials(person.full_name)}</span>
+              <div><strong>{person.full_name}</strong><small>{person.public_id}</small></div>
+            </li>)}</ul>}
+        {data.pending > data.absent.length && <p className="muted">Showing the first {data.absent.length} of {data.pending}.</p>}
+      </section>
     </>}
   </>
+}
+
+function initials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0].toUpperCase()).join('') || '?'
 }
 
 function Pagination({ page, total, setPage }: { page: number; total: number; setPage: (page: number) => void }) {
@@ -151,7 +168,7 @@ export function Users({ timezone }: { timezone: string }) {
   </>
 }
 
-export function Records({ timezone }: { timezone: string }) {
+export function Records({ timezone, threshold }: { timezone: string; threshold: number }) {
   const [form, setForm] = useState({ start: '', end: '', search: '', public_id: '' })
   const [page, setPage] = useState(1)
   const encode = (values: typeof form) => new URLSearchParams(Object.entries(values).filter(([, value]) => value)).toString()
@@ -177,10 +194,10 @@ export function Records({ timezone }: { timezone: string }) {
       error || !data ? <LoadState error={error} retry={retry} /> : <div className="panel">
         <div className="table-scroll"><table>
           <thead><tr><th scope="col">Name</th><th scope="col">Profile ID</th><th scope="col">Date</th>
-            <th scope="col">Check-in time</th><th scope="col">Cosine similarity</th></tr></thead>
+            <th scope="col">Check-in time</th><th scope="col">Match strength</th></tr></thead>
           <tbody>{data.items.map(record => <tr key={record.public_id + record.attendance_date}>
             <td>{record.full_name}</td><td className="id">{record.public_id}</td><td>{record.attendance_date}</td>
-            <td>{formatTime(record.checked_in_at, timezone)}</td><td>{record.similarity.toFixed(3)}</td>
+            <td>{formatTime(record.checked_in_at, timezone)}</td><td><MatchStrength similarity={record.similarity} threshold={threshold} /></td>
           </tr>)}</tbody>
         </table></div>
         {!data.items.length && <p className="empty">{query ? 'No records match these filters.' : 'No check-ins yet.'}</p>}
