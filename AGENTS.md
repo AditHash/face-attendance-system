@@ -98,6 +98,7 @@ Tests use fake vectors and simulated cameras, and real faces never go into CI. I
 - Frames are downscaled to 640 px, faces must be at least 72 px, and a frame is rejected entirely if it has more than 8 faces. This limits distant or crowded scenes.
 - There is no per-face tracker (streaks are tracked per identity), no best-crop evidence for check-ins, and no check-out.
 - `FaceEngine` uses one lock, so inference for all cameras runs one frame at a time.
+- Planned: passive liveness with MiniFAS ONNX from facenox/face-antispoof-onnx (128×128 RGB, 1.5× square crop, Real/Spoof). Run it through `cv2.dnn` on the non-quantized model, gate streak frames on "real", add a `spoof_suspected` state, and expose a toggle and threshold in Settings. Pin a SHA-256 in `download_models.py` and verify the preprocessing against the reference code first. Self-reported accuracy is 98.2% on CelebA-Spoof. It does not stop 3D masks.
 - Planned: mood-aware greeting text from a facial-expression estimate. Only the greeting may change. Never store or log the estimate or act on it, and mention the legal limits (the EU AI Act bans emotion recognition at work and in schools).
 
 ## References

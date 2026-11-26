@@ -259,7 +259,12 @@ If Windows blocks pytest's temp directory, run `uv run pytest --basetemp data/py
 - **Server-side camera workers.** Run detection on the server so that recognition doesn't need a browser tab open.
 - **Crowd scenes.** Detect at full resolution or in tiles, track each face across frames, and drop the 8-face limit.
 - **Evidence and check-out.** Save the best face crop with each check-in, and record exit times.
-- **Liveness detection** to reject photos and screens.
+- **Liveness detection.** Reject printed photos and phone or laptop screens. The candidate model is MiniFAS, from [facenox/face-antispoof-onnx](https://github.com/facenox/face-antispoof-onnx) (Apache-2.0, based on Minivision's [Silent-Face-Anti-Spoofing](https://github.com/minivision-ai/Silent-Face-Anti-Spoofing)):
+  - `best_model.onnx` (1.8 MB) takes a 128×128 RGB crop, 1.5× the face box, and outputs Real or Spoof. Its default threshold is 0.5, or 0.8 for high security.
+  - It reuses YuNet's face boxes, adds one small CPU call per face, and a face counts toward a check-in only if it is also judged real.
+  - The reported 98.2% accuracy on CelebA-Spoof is self-reported. It needs testing on our own cameras.
+  - It does not stop 3D masks. It struggles with backlight, faces under 64 px, and heads turned more than ±30°.
+  - Before adding it: pin a SHA-256 for the model, confirm the weights license, and read the reference preprocessing (normalization and which output index is "real").
 
 ## Credits and license
 
