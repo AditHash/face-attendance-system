@@ -1,55 +1,104 @@
-# VisionAttend — implementation specification
-Build a fully functional end-to-end local computer vision portfolio application, not just scaffolding or mock UI. Independent interview demo; no employer assets or data. Prioritize a working CPU-based system with real persistence and live inference. Not production-ready for workplace deployment.
+# VisionAttend: agent guide
 
-## Stack
-Python 3.10–3.12, FastAPI, Uvicorn, OpenCV headless, NumPy, SQLite, React + TypeScript + Vite + React Router + Tailwind CSS (local build; no external CDNs or paid APIs), browser getUserMedia, WebSocket for live inference. OpenCV Zoo YuNet and SFace ONNX models. Explicit model download script validates non-LFS content and handles errors. Verify model licenses before redistribution. Bind only to 127.0.0.1. Use configurable timezone (default Asia/Kolkata).
+VisionAttend is a local face-recognition attendance system and portfolio demo. It runs on CPU and binds only to 127.0.0.1. Persistence is real (SQLite) and inference is live. It is not ready for production use at a workplace. The user-facing docs are in README.md. This file describes how the code works and the rules for changing it.
 
-## User journeys and routes
-- / : dashboard with actual database counts (registered, checked in today, not checked in, attendance rate), recent events and seven-day chart. No hardcoded real records.
-- /register : three-step wizard (details, enrollment, success). Full name, validated email, explicit biometric consent. Email unique case-insensitively. Capture 5–10 quality samples, only after explicit start, exactly one face, distinct frames, minimum face size, blur checks, sufficient detector score, modest pose changes. User sees sample counter, progress, preview and quality feedback. Do not require a specific pose unless actual pose checks implemented. Compute normalized mean of normalized sample embeddings. Only after successful enrollment atomically create user with unique server-generated UUID and friendly unique public ID (VA-000001 etc.); display ID and copy button. No raw image retention. Cancel/timeout discards transient enrollment.
-- /attendance : distinct kiosk-style attendance terminal. Participant enters their own assigned ID (or selects their own profile); resolve profile and explicitly start verification. Local camera live preview, overlays aligned to displayed frame (mirror handling, aspect ratio), face bounding box and detection confidence, cosine similarity score, matching threshold, current status, FPS, server inference latency, and stable-match progress. Verify exclusively against the claimed profile; no gallery identification, bystander recording or background scanning. For 3 consecutive valid matching frames (configurable), issue short-lived single-use server-side verification token tied to profile and session. Enable Confirm Check-in; consume token atomically and mark once per local date. Reset/stop camera and return to ID entry after confirmation, cancellation or timeout. Unknown ID, no face, multiple faces, low similarity, poor quality, duplicate attendance and camera errors get distinct states. Never mark attendance on failed verification. Duplicate returns existing timestamp and friendly status.
-- /users : searchable/paginated enrolled profiles with ID, name, email, registration date and enrollment status. No embeddings returned by API. Delete with confirmation and cascading attendance deletion; allow re-enrollment with explicit consent.
-- /records : attendance table, filters by date and user, date range, search, pagination, CSV download (escape spreadsheet formula injection). Display timestamps in configured local timezone.
-- /settings : model health, camera choice (device local), configurable verification threshold and stable frame count, local timezone display. Validate bounds; persist settings locally if editable. Never call cosine similarity a calibrated confidence probability.
-- /docs : OpenAPI docs.
+## Current behavior (keep docs in sync with this)
 
-## Computer vision and live pipeline
-Use cv2.FaceDetectorYN.create, setInputSize per image, cv2.FaceRecognizerSF.create, alignCrop, feature. OpenCV SFace benchmark cosine threshold 0.363 is a starting point, not a security guarantee. Use normalized vectors and dot product; return raw cosine [-1,1] and separate detector confidence [0,1]. Label similarity as such; do not imply accuracy or probability. Reject invalid images, zero-norm vectors, invalid dimensions, oversize payloads, no/multiple faces. Lock shared model instances. Browser capture via canvas, JPEG ~640x480, 3–5 inference requests/sec with at most one outstanding frame, responsive video preview at native FPS; drop stale frames, do not queue. WebSocket frame sequence IDs, JSON response with normalized bbox, detector score, similarity, threshold, quality, verification state, stable_count, latency_ms, verification_token only on success. Use timeouts and clean disconnects, close stream on navigation. Enrollment samples kept in memory only with bounded TTL/session limit. Avoid blocking asyncio event loop: offload CV and blocking DB operations. Validate origin/host and use same-origin only. No silent tracking, image logs, telemetry, remote uploads, or external APIs.
+- **Enrollment** (`/register`): name, email (unique, case-insensitive), and explicit biometric consent.
+  - Collect exactly 5 samples. Each sample must have:
+    - exactly one face, at least 72 px
+    - a Laplacian variance of at least 45
+    - a gap of at least 0.45 s from the previous sample, and different frame bytes
+    - cosine similarity of at least 0.363 to the first sample
+  - Store the normalized mean of the normalized SFace embeddings as one template.
+  - Samples live only in memory: 300 s TTL, at most 32 sessions.
+  - The user and template are created atomically. The public ID (`VA-000001`, ...) is generated server-side.
+  - Re-enrolling replaces the template and its revision.
+- **Attendance** (`/attendance`) uses automatic 1:N identification. There is no claimed ID and no token.
+  - Each frame can contain up to 8 faces. Each face is matched against all templates for the current `MODEL_VERSION`.
+  - A face matches only when all of these hold:
+    - best cosine is at or above the threshold (default 0.363, configurable)
+    - best minus second-best is at least `MATCH_GAP` (0.05)
+    - no other face in the same frame matched the same profile
+  - After `stable_frames` consecutive matching frames (default 3, range 2–8), `Store.mark` inserts one row per profile per local date. Inserts are idempotent through `UNIQUE (user_uuid, attendance_date)` and the template `revision` check.
+  - The timestamp comes from the server's UTC clock. The date comes from `VISIONATTEND_TIMEZONE` (default `Asia/Kolkata`).
+  - Streaks reset in these cases:
+    - the policy changes
+    - more than 2 s pass between frames
+    - a frame has no faces
+    - the source disconnects
+- **Camera sources:**
+  - Browser webcam.
+  - IP camera: RTSP over TCP, or HTTP(S) MJPEG, through `/ws/ip-camera` and an isolated `ip_camera_worker.py` subprocess. The URL is passed on stdin. Only private IPv4 addresses are allowed, redirects are refused, at most 4 cameras run at once, and HTTPS certificates are verified, so self-signed certificates fail.
+  - Phone browser paired by QR code through the separate HTTPS listener in `vision_phone.py`. The pairing link is single-use with a 120 s TTL.
+- **Other pages:**
+  - `/` is the dashboard (real counts and a 7-day chart).
+  - `/users` lists profiles (search, pagination, re-enroll, delete with cascade).
+  - `/records` shows records (filters, pagination, CSV export with formula escaping).
+  - `/settings` holds model health, the default camera, the threshold, and stable frames.
+  - `/docs` is the API reference, using Swagger assets bundled locally.
+- **Terminal UI:**
+  - Face boxes and cards are color-coded by state: ok, pending, or bad.
+  - The panel flashes on each new check-in.
+  - Kiosk mode hides the sidebar and requests fullscreen.
+  - The IP URL is kept only in component state.
 
-## Persistent data and service design
-Suggested layout: app/main.py, app/config.py, app/db.py, app/routers/{pages,users,attendance,settings}.py, app/services/{face_engine,enrollment,verification}.py, frontend/src/{pages,components,hooks,lib,types}, frontend/public, frontend/package.json, frontend/vite.config.ts, scripts/download_models.py, tests, requirements.txt, README.md, .gitignore, AGENTS.md, CLAUDE.md. Use React SPA; FastAPI provides API/WebSocket endpoints and optionally serves the compiled frontend/dist for a single-origin deployment. SPA fallback must not swallow /api, /ws or /docs errors. Modular typed Python, Pydantic schemas, straightforward code and helpful errors.
-Tables: users (uuid PK, public_id UNIQUE, full_name, normalized_email UNIQUE, consent_at, created_at); face_templates (user_uuid PK/FK, normalized embedding BLOB float32, model version, sample_count, created_at); attendance (id PK, user_uuid FK, attendance_date, checked_in_at UTC, similarity, UNIQUE(user_uuid,attendance_date)); verification_tokens (hashed token or opaque random token in bounded session memory, profile/session binding, expiry, consumed state). Store UTC timestamps, derive date using configured timezone on server. Atomic transactions, parameterized queries, foreign keys, indices on dates/user/email, concurrency-safe ID generation and check-in. Never persist raw frames. Handle DB errors and avoid exposing internals.
+## Layout
 
-## API contracts
-GET /api/health, GET /api/dashboard, GET /api/users, GET /api/users/{public_id}, POST /api/enrollment/start, POST /api/enrollment/{session_id}/sample (multipart), POST /api/enrollment/{session_id}/complete, DELETE /api/enrollment/{session_id}, WS /ws/verify (claimed public ID + session initialization then frame messages), POST /api/attendance/check-in (verification token), GET /api/attendance, GET /api/attendance.csv, DELETE /api/users/{public_id}, GET /api/settings, PATCH /api/settings if editable. Use proper 4xx/5xx codes, consistent errors and response schemas. Never expose face templates. Reject expired, replayed, or mismatched verification tokens; atomic attendance uniqueness is final defense.
+```
+app.py                 FastAPI app factory create_app(): REST, WebSockets, host/origin boundary, SPA routes
+run_visionattend.py    Launcher: loopback app, plus the optional phone HTTPS listener (--phone-ip --cert --key)
+vision_models.py       FaceEngine (YuNet + SFace, one lock), JPEG validation, quality gating
+vision_attendance.py   LiveAttendance: per-socket matching, streaks, check-in
+vision_sessions.py     Enrollments: transient sample sessions
+vision_db.py           Store: SQLite schema and all queries (WAL, foreign keys, parameterized SQL)
+vision_ip_camera.py    IPCameras WebSocket relay and worker lifecycle
+ip_camera_worker.py    RTSP/MJPEG reader subprocess (frames sent as length-prefixed JPEGs on stdout)
+vision_phone.py        PhoneRelay pairing and the camera-only phone app
+download_models.py     Downloads YuNet/SFace from the OpenCV Zoo and checks pinned SHA-256 hashes
+frontend/src/          React + TS + Vite: main.tsx (routes), camera.tsx (useCamera, CameraPanel),
+                       terminal.tsx (useLiveAttendance, kiosk), register.tsx, pages.tsx, phone.tsx, api.ts
+tests/                 pytest with a temporary DB, FakeEngine, and simulated cameras
+.github/workflows/ci.yml  Backend and frontend tests and build on push and PR
+```
 
-## React frontend architecture
-- React + TypeScript, Vite, React Router, Tailwind CSS; use Lucide icons and Recharts for the real dashboard data if helpful. Commit package-lock.json. No CDN dependencies.
-- Dedicated pages: Dashboard, Register, Attendance, Users, Records, Settings. Shared AppLayout, Sidebar, StatusBadge, CameraPreview, FaceOverlay, MetricCard, DataTable, and error/loading components. Keep camera and WebSocket lifecycle in useCamera/useVerification hooks; use typed REST client and WebSocket messages. State machines for registration and verification, avoid unnecessary global state. Handle StrictMode cleanup, route navigation, aborted requests, stale frames, camera tracks and socket closure. Never open camera automatically on page mount; require deliberate Start action.
-- Development: Vite binds localhost, proxies /api to FastAPI on 127.0.0.1:8000 and /ws with ws:true; use relative API URLs and derive WS scheme from current origin. Explicitly allow only configured local origins on backend. Production/demo build: npm run build, serve dist from FastAPI, document both modes. No permissive CORS or public network binding.
-- Test React components and state transitions with Vitest/React Testing Library, mock camera and WebSocket; run npm run build and frontend tests. Document actual camera verification separately.
+Tables: `users`, `face_templates` (one template per user, with `model_version` and `revision`), `attendance`, `settings` (a single row: threshold, stable_frames, last_public_id).
 
-## UI
-Professional responsive dashboard, sidebar navigation, accessible labels, loading/empty/error states, toast feedback, clear camera start/stop controls. Registration stepper, progress and success ID. Attendance page large camera panel, status panel with raw similarity and detection confidence, threshold indicator, actual FPS and measured inference latency. No fake FPS or score. Records filters and CSV, confirmation dialogs, real backend integrations. Do not render user input as HTML. Gracefully handle missing models, camera permission denial, disconnection and network timeouts.
+## Rules
 
-## Privacy and limitations
-Only consenting adult demo participants and claimed-identity 1:1 verification, no continuous background monitoring or identification of unrelated people. No use for actual workplace decisions, access control or payroll. No authentication/authorization, liveness detection, encryption at rest, or fairness/accuracy validation unless actually implemented; disclose visibly and in README. Photo replay may fool this prototype. Do not claim blink checks are robust anti-spoofing. Data deletion and camera stop are mandatory. .gitignore data/, model weights, db/sqlite files, enrollment images, embeddings, .env, venv, caches, frontend/node_modules/, frontend/dist/. Never commit personal or biometric records.
+- **Local only.** Bind to 127.0.0.1. Keep the host/origin checks in `desktop_boundary` and `valid_socket`. Don't add permissive CORS, public binding, cloud services, telemetry, or external APIs.
+- **No biometric data in git or logs.** Never persist raw frames. Never return embeddings from the API. Never log camera URLs, because they can contain credentials. Keep `data/`, `models/*.onnx`, `*.db`, `*.pem`, `*.key`, `.env`, `node_modules/`, and `frontend/dist/` ignored.
+- **Honest metrics.** Cosine similarity is a raw score from −1 to 1. Detector confidence is a separate score from 0 to 1. Never present either one as a probability or as accuracy. FPS and latency must be measured, not estimated.
+- **Don't block the event loop.** Run CV and SQLite work through `run_in_threadpool`. Drop stale frames instead of queuing them. Allow at most one frame in flight per socket.
+- **Validate at trust boundaries.** Check frame size (≤ 512 KiB, ≤ 640 px edge), JPEG format, WebSocket message size and sequence, URL scheme and private IP, and Pydantic models on every input.
+- **Keep the scope disclosed.** There is no authentication, liveness detection, encryption at rest, or validation for real deployments, and a photo can fool it. Keep this stated in the UI and README. Use it only with consenting adults.
+- Keep code small and explainable. Extend the module that owns a behavior instead of adding layers.
 
-## Tests and definition of done
-1. Fresh clone setup on Windows/Linux, explicit download script, app runs on localhost.
-2. Valid registration creates one unique user + template atomically; duplicate email, failed/cancelled enrollment, invalid/multiple/no-face frames rejected.
-3. Live claimed-ID verification returns actual scores/metrics; stable match required; failed match never marks attendance.
-4. Valid token check-in works; expired, forged, replayed and cross-profile tokens fail; concurrent duplicates produce one daily row.
-5. Dashboard queries, filters, pagination, safe CSV, deletion cascade work on actual data.
-6. Test thresholds, normalization, quality gating, WebSocket protocol, frame limits, token expiry, duplicate constraints, timezone boundary, API validation, and DB rollback using mocks/fake vectors and temporary DB. Never use real faces in CI.
-7. Run compileall, pytest, frontend tests, TypeScript checks and npm run build; fix errors. Manual browser/camera walkthrough if available; explicitly report unavailable camera tests. No fake success claims.
-8. README includes setup, routes, architecture, diagram, model references, API, demo walkthrough, troubleshooting, privacy limitations, detector vs recognizer, cosine threshold and false accepts/rejects, ONNX and CPU inference. Include sample commands for PowerShell and Linux, npm ci, npm run dev, npm run build and single-server launch. Document actual dependencies.
-9. All core pages working and no TODO stubs; prioritize registration and live attendance before optional polish. React is required; no cloud or Docker until core works.
+## Checks (run before finishing)
+
+```sh
+uv run pytest                      # on Windows, if temp is blocked: --basetemp data/pytest-local
+uv run python -m compileall -q app.py vision_*.py ip_camera_worker.py run_visionattend.py download_models.py
+cd frontend && npm test && npm run build   # the build runs tsc --noEmit first
+```
+
+Tests use fake vectors and simulated cameras, and real faces never go into CI. If you couldn't check the live camera or browser behavior, say so explicitly.
+
+## Git
+
+- Commit messages are plain. Do **not** add `Co-Authored-By` trailers for Claude, Codex, or any other AI, and don't add "Generated with" lines.
+- Commit with the GitHub noreply email, not a personal address.
+- Never force-push or rewrite published history unless explicitly asked.
+
+## Known gaps / next steps
+
+- Recognition needs the browser tab open, because the browser forwards IP-camera frames. A server-side worker per camera would remove that dependency.
+- Frames are downscaled to 640 px, faces must be at least 72 px, and a frame is rejected entirely if it has more than 8 faces. This limits distant or crowded scenes.
+- There is no per-face tracker (streaks are tracked per identity), no best-crop evidence for check-ins, and no check-out.
+- `FaceEngine` uses one lock, so inference for all cameras runs one frame at a time.
 
 ## References
-https://docs.opencv.org/4.x/d0/dd4/tutorial_dnn_face.html
-https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet
-https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface
 
-## Agent workflow
-Inspect existing files before editing. Implement the complete MVP, install dependencies, download models, run tests, fix issues and provide exact startup commands plus honest limitations. Do not stop after writing a plan. Do not push real biometric data or add remote services. Keep code understandable for interview explanation.
+- https://docs.opencv.org/4.x/d0/dd4/tutorial_dnn_face.html
+- https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet
+- https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface

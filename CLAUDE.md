@@ -2,4 +2,9 @@
 
 @AGENTS.md
 
-Read and follow AGENTS.md. Implement the working MVP, run the tests, and document any unverified manual camera checks. Keep the application local-only and do not commit biometric data.
+Follow AGENTS.md. It describes the current behavior, layout, rules, and checks.
+
+- Inspect the relevant module before editing, and keep changes in the module that owns the behavior.
+- Run the checks in AGENTS.md before you say a change is done. Report any camera or browser behavior you couldn't verify.
+- Keep the app local-only. Never commit biometric data, databases, model weights, or keys.
+- No `Co-Authored-By` or other AI attribution in commits or PRs.
